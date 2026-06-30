@@ -15,7 +15,15 @@ from datetime import datetime
 from _app.config_loader import load_config
 from _app.db import TrialsDB
 from _app.parser import parse_sprintscope_csv, prepare_trial_record
-from _app.splits import compute_trial_metrics
+from _app.splits import compute_trial_metrics, find_zero_crossing, find_t_reach, get_valid_window_mask, compute_custom_splits
+from _app.comparison import (
+    check_comparability,
+    filter_comparable_trials,
+    build_split_matrix_mode_a,
+    build_split_matrix_mode_b,
+    get_trial_conditions_row,
+    format_matrix_for_display,
+)
 
 
 # Configuration and initialization
@@ -40,89 +48,165 @@ if warnings:
 st.title("Laveg — Laser Velocity Session Database & Review")
 
 # Sidebar controls
-st.sidebar.header("Selection")
+st.sidebar.header("Comparison Mode")
 
-# Event group selector
-event_groups = db.get_event_groups()
-if not event_groups:
-    st.sidebar.warning("No event groups found in database. Import trials first.")
-    selected_event = None
-else:
-    selected_event = st.sidebar.selectbox("Event Group", ["All"] + event_groups)
-    if selected_event == "All":
-        selected_event = None
+# Comparison mode selector
+comparison_mode = st.sidebar.radio(
+    "Select comparison mode",
+    ["Mode A: Athlete Progression", "Mode B: Athlete Comparison"],
+    help="Mode A: One athlete over time. Mode B: Multiple athletes."
+)
 
-# Athlete selector
-if selected_event:
-    athletes = db.get_athletes_by_event(selected_event)
-else:
-    # Get all unique athletes
-    all_trials = db.get_all_trials()
-    athletes = sorted(all_trials["athlete_name"].unique().tolist()) if not all_trials.empty else []
-
-if not athletes:
-    st.sidebar.warning("No athletes found.")
-    selected_athlete = None
-else:
-    selected_athlete = st.sidebar.selectbox("Athlete", athletes)
-
-# Trial/session selector
-if selected_athlete:
-    athlete_trials = db.get_trials_by_athlete(selected_athlete, event_group=selected_event)
-    
-    if not athlete_trials.empty:
-        # Group trials by session_date
-        trial_trials = athlete_trials.sort_values("session_date", ascending=False)
-        
-        # Create display labels: date - test_type - distance - peak_v
-        trial_list = []
-        trial_ids = []
-        
-        for _, row in trial_trials.iterrows():
-            date_str = row["session_date"] or "No date"
-            test_type = row["test_type"] or "Unknown"
-            distance = f"{row['distance_m']:.0f}m" if row["distance_m"] else "Unknown distance"
-            peak_v = f"{row['peak_v_ms']:.2f}m/s" if row["peak_v_ms"] else "No peak"
-            
-            # Flag for short trials
-            flag = "⚠️ SHORT" if row["flag_short_trial"] == 1 else ""
-            
-            label = f"{date_str} - {test_type} - {distance} - {peak_v} {flag}".strip()
-            trial_list.append(label)
-            trial_ids.append(row["trial_id"])
-        
-        # Multi-select trials
-        include_flagged = st.sidebar.checkbox("Include flagged (short) trials", value=False)
-        if not include_flagged:
-            # Filter out flagged trials
-            filtered_trials = []
-            filtered_ids = []
-            for trial_id, label in zip(trial_ids, trial_list):
-                trial = athlete_trials[athlete_trials["trial_id"] == trial_id].iloc[0]
-                if trial["flag_short_trial"] != 1:
-                    filtered_trials.append(label)
-                    filtered_ids.append(trial_id)
-            trial_list = filtered_trials
-            trial_ids = filtered_ids
-        
-        selected_trials_labels = st.sidebar.multiselect("Select trials to compare", trial_list, default=trial_list[:1] if trial_list else [])
-        
-        # Map labels back to trial IDs
-        selected_trial_ids = [trial_ids[trial_list.index(label)] for label in selected_trials_labels]
-    else:
-        selected_trial_ids = []
-        st.sidebar.info("No trials for this athlete.")
-else:
-    selected_trial_ids = []
-
-# Split interval control
+# Split interval control (applies to both modes)
 split_interval = st.sidebar.selectbox(
     "Split Interval (m)",
     [5, 10, 20, 50],
     index=1,  # Default to 10m
 )
 
+# Event group selector
+event_groups = db.get_event_groups()
+if not event_groups:
+    st.sidebar.warning("No event groups found in database. Import trials first.")
+    selected_trial_ids = []
+else:
+    selected_event = st.sidebar.selectbox("Event Group", ["All"] + event_groups)
+    if selected_event == "All":
+        selected_event = None
+    
+    # Mode-specific selection
+    if "Mode A" in comparison_mode:
+        # MODE A: One athlete, multiple trials
+        st.sidebar.subheader("Mode A: Athlete Progression")
+        
+        # Get athletes for event
+        if selected_event:
+            athletes = db.get_athletes_by_event(selected_event)
+        else:
+            all_trials = db.get_all_trials()
+            athletes = sorted(all_trials["athlete_name"].unique().tolist()) if not all_trials.empty else []
+        
+        if not athletes:
+            st.sidebar.warning("No athletes found.")
+            selected_trial_ids = []
+        else:
+            selected_athlete = st.sidebar.selectbox("Select athlete", athletes)
+            
+            # Get trials for this athlete
+            athlete_trials = db.get_trials_by_athlete(selected_athlete, event_group=selected_event)
+            
+            if athlete_trials.empty:
+                st.sidebar.info("No trials for this athlete.")
+                selected_trial_ids = []
+            else:
+                # Sort by date
+                athlete_trials = athlete_trials.sort_values("session_date", ascending=False)
+                
+                # Create trial labels
+                trial_list = []
+                trial_ids = []
+                for _, row in athlete_trials.iterrows():
+                    date_str = row["session_date"] or "No date"
+                    distance = f"{row['distance_m']:.0f}m" if row["distance_m"] else "?"
+                    start_pos = row["start_position"] or "?"
+                    peak_v = f"{row['peak_v_ms']:.2f}m/s" if row["peak_v_ms"] else "?"
+                    flag = "⚠️" if row["flag_short_trial"] == 1 else ""
+                    
+                    label = f"{date_str} - {distance}/{start_pos} - {peak_v} {flag}".strip()
+                    trial_list.append(label)
+                    trial_ids.append(row["trial_id"])
+                
+                # Multi-select trials
+                selected_labels = st.sidebar.multiselect(
+                    "Select trials for this athlete",
+                    trial_list,
+                    default=trial_list[:1] if trial_list else [],
+                    help="All must share the same distance and start position."
+                )
+                
+                selected_trial_ids = [trial_ids[trial_list.index(label)] for label in selected_labels]
+    
+    else:
+        # MODE B: Multiple athletes, one trial each
+        st.sidebar.subheader("Mode B: Athlete Comparison")
+        
+        # Get athletes for event
+        if selected_event:
+            athletes = db.get_athletes_by_event(selected_event)
+        else:
+            all_trials = db.get_all_trials()
+            athletes = sorted(all_trials["athlete_name"].unique().tolist()) if not all_trials.empty else []
+        
+        if not athletes or len(athletes) < 2:
+            st.sidebar.warning("Need at least 2 athletes for Mode B.")
+            selected_trial_ids = []
+        else:
+            # Multi-select athletes
+            selected_athletes = st.sidebar.multiselect(
+                "Select athletes to compare",
+                athletes,
+                min_selections=2,
+                help="Select 2 or more athletes."
+            )
+            
+            if len(selected_athletes) < 2:
+                st.sidebar.info("Select at least 2 athletes.")
+                selected_trial_ids = []
+            else:
+                # Selection rule
+                selection_rule = st.sidebar.radio(
+                    "Representative trial selection",
+                    ["Best (fastest)", "Latest (most recent)", "Manual pick"],
+                    help="Rule for choosing one trial per athlete."
+                )
+                
+                selected_trial_ids = []
+                
+                for athlete_name in selected_athletes:
+                    athlete_trials = db.get_trials_by_athlete(athlete_name, event_group=selected_event)
+                    
+                    if athlete_trials.empty:
+                        st.sidebar.warning(f"No trials for {athlete_name}")
+                        continue
+                    
+                    if selection_rule == "Best (fastest)":
+                        # Choose trial with highest peak_v at same distance
+                        # First get the most common distance
+                        most_common_distance = athlete_trials["distance_m"].mode()
+                        if len(most_common_distance) > 0:
+                            same_dist = athlete_trials[athlete_trials["distance_m"] == most_common_distance[0]]
+                            chosen = same_dist.loc[same_dist["peak_v_ms"].idxmax()]
+                        else:
+                            chosen = athlete_trials.loc[athlete_trials["peak_v_ms"].idxmax()]
+                        selected_trial_ids.append(chosen["trial_id"])
+                    
+                    elif selection_rule == "Latest (most recent)":
+                        # Choose most recent trial
+                        latest = athlete_trials.sort_values("session_date", ascending=False).iloc[0]
+                        selected_trial_ids.append(latest["trial_id"])
+                    
+                    else:  # Manual pick
+                        # Show options for manual selection
+                        athlete_trials = athlete_trials.sort_values("session_date", ascending=False)
+                        trial_list = []
+                        trial_ids_list = []
+                        for _, row in athlete_trials.iterrows():
+                            date_str = row["session_date"] or "No date"
+                            distance = f"{row['distance_m']:.0f}m" if row["distance_m"] else "?"
+                            peak_v = f"{row['peak_v_ms']:.2f}m/s" if row["peak_v_ms"] else "?"
+                            label = f"{date_str} - {distance} - {peak_v}"
+                            trial_list.append(label)
+                            trial_ids_list.append(row["trial_id"])
+                        
+                        chosen_label = st.sidebar.selectbox(
+                            f"Pick trial for {athlete_name}",
+                            trial_list
+                        )
+                        chosen_idx = trial_list.index(chosen_label)
+                        selected_trial_ids.append(trial_ids_list[chosen_idx])
+
 # Scan for new files
+st.sidebar.header("Import")
 if st.sidebar.button("🔄 Scan for new CSV files"):
     st.sidebar.info("Scanning for new files...")
     
@@ -177,380 +261,398 @@ if st.sidebar.button("🔄 Scan for new CSV files"):
             st.sidebar.warning(error)
 
 # Main content area
-if selected_trial_ids:
-    # Get trial data
+if not selected_trial_ids:
+    st.info("Select trials from the sidebar to begin comparison.")
+    st.write("""
+    ### Comparison Modes
+    
+    **Mode A - Athlete Progression**
+    - Select one athlete and multiple trials at the same distance
+    - Visualize progression over time with date-ordered overlay plot
+    - View split matrices organized by session date
+    - Track conditions and metrics by trial date
+    
+    **Mode B - Athlete Comparison**
+    - Select 2+ athletes to compare
+    - Choose one representative trial per athlete (best, latest, or manual)
+    - All trials must be at the same distance for valid comparison
+    - View athlete-keyed split matrices and peak velocity comparison
+    """)
+
+elif "Mode A" in comparison_mode:
+    # MODE A: Athlete Progression
+    st.header("Mode A: Athlete Progression")
+    
     selected_trials = db.get_trials_by_ids(selected_trial_ids)
     
-    # Create tabs
-    tab_overlay, tab_splits, tab_trend, tab_detail = st.tabs(
-        ["Overlay Plot", "Split Comparison", "Development Trend", "Trial Detail"]
-    )
+    # Check comparability
+    is_comparable, comp_message = check_comparability(selected_trials)
+    st.info(comp_message)
     
-    with tab_overlay:
-        st.subheader("Velocity Profile Overlay")
-        st.write("Velocity vs. Filtered Distance for selected trials")
+    if not is_comparable:
+        # Filter to comparable trials
+        reference_trial = selected_trials.iloc[0]
+        comparable_trials, excluded_ids = filter_comparable_trials(selected_trials, reference_trial)
         
-        # Import valid window functions
-        from _app.splits import find_zero_crossing, find_t_reach, get_valid_window_mask
-        
-        # Build overlay plot
-        fig = go.Figure()
-        
-        for trial_id in selected_trial_ids:
-            trial = selected_trials[selected_trials["trial_id"] == trial_id].iloc[0]
-            samples = db.get_samples_for_trial(trial_id)
-            
-            if samples.empty:
-                continue
-            
-            # Apply time-based valid window instead of distance-based clipping
-            distance_m = trial["distance_m"]
-            split_origin_t_s = trial["split_origin_t_s"]
-            t_reach = find_t_reach(samples, distance_m)
-            valid_mask = get_valid_window_mask(samples, split_origin_t_s, t_reach)
-            samples_valid = samples[valid_mask]
-            
-            # Create trace
-            label = f"{trial['session_date']} - {trial['test_type']}"
-            if trial["flag_short_trial"] == 1:
-                label += " (SHORT)"
-            
-            dash = "dash" if trial["flag_short_trial"] == 1 else "solid"
-            
-            fig.add_trace(go.Scatter(
-                x=samples_valid["dist_filt_m"],
-                y=samples_valid["vel_ms"],
-                mode="lines",
-                name=label,
-                line=dict(dash=dash),
-            ))
-            
-            # Mark peak velocity
-            if trial["peak_v_ms"] and trial["peak_v_distance_m"]:
-                fig.add_trace(go.Scatter(
-                    x=[trial["peak_v_distance_m"]],
-                    y=[trial["peak_v_ms"]],
-                    mode="markers",
-                    marker=dict(size=8, symbol="star"),
-                    name=f"Peak ({trial['peak_v_distance_m']:.1f}m)",
-                    showlegend=False,
-                ))
-        
-        fig.update_layout(
-            title="Velocity vs. Filtered Distance",
-            xaxis_title="Filtered Distance (m)",
-            yaxis_title="Velocity (m/s)",
-            hovermode="x unified",
-            height=500,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Download PNG button
-        st.write("TODO: Download PNG button")
-    
-    with tab_splits:
-        st.subheader("Split Comparison Table")
-        st.write(f"Custom splits at {split_interval}m interval")
-        
-        # Build comparison table: rows = distances, columns = trials (grouped by split_time, cum_time, velocity)
-        try:
-            # Collect custom splits for all selected trials
-            trial_splits = {}
-            for trial_id in selected_trial_ids:
+        if excluded_ids:
+            excluded_info = []
+            for trial_id in excluded_ids:
                 trial = selected_trials[selected_trials["trial_id"] == trial_id].iloc[0]
-                samples = db.get_samples_for_trial(trial_id)
-                
-                if samples.empty:
-                    continue
-                
-                # Compute custom splits using splits module
-                from _app.splits import compute_custom_splits, find_zero_crossing
-                t_origin = find_zero_crossing(samples)
-                splits = compute_custom_splits(
-                    samples,
-                    t_origin or 0,
-                    trial["distance_m"],
-                    split_interval,
-                )
-                
-                if not splits.empty:
-                    trial_splits[trial_id] = {
-                        "label": f"{trial['session_date']} - {trial['test_type']}",
-                        "splits": splits,
-                    }
+                excluded_info.append(f"- {trial['session_date']} at {trial['distance_m']:.0f}m from {trial['start_position']}")
             
-            if trial_splits:
-                # Build comparison DataFrame
-                comparison_data = []
-                
-                # Get all unique split distances
-                all_distances = set()
-                for trial_data in trial_splits.values():
-                    all_distances.update(trial_data["splits"]["split_distance_m"].tolist())
-                
-                all_distances = sorted(list(all_distances))
-                
-                for distance in all_distances:
-                    row = {"Split (m)": distance}
-                    
-                    # Find fastest cumulative time at this distance
-                    fastest_cum_t = float('inf')
-                    
-                    for trial_id, trial_data in trial_splits.items():
-                        splits_df = trial_data["splits"]
-                        dist_row = splits_df[splits_df["split_distance_m"] == distance]
-                        
-                        if not dist_row.empty:
-                            cum_t = dist_row.iloc[0]["cumulative_time_s"]
-                            split_t = dist_row.iloc[0]["split_time_s"]
-                            vel_split = dist_row.iloc[0]["velocity_at_split_ms"]
-                            
-                            row[f"{trial_data['label']} - Time"] = f"{cum_t:.3f}s"
-                            row[f"{trial_data['label']} - Split"] = f"{split_t:.3f}s"
-                            row[f"{trial_data['label']} - Vel"] = f"{vel_split:.2f}m/s"
-                            
-                            fastest_cum_t = min(fastest_cum_t, cum_t)
-                    
-                    # Mark fastest
-                    if fastest_cum_t != float('inf'):
-                        for trial_id, trial_data in trial_splits.items():
-                            splits_df = trial_data["splits"]
-                            dist_row = splits_df[splits_df["split_distance_m"] == distance]
-                            if not dist_row.empty:
-                                cum_t = dist_row.iloc[0]["cumulative_time_s"]
-                                if abs(cum_t - fastest_cum_t) < 0.001:
-                                    time_col = f"{trial_data['label']} - Time"
-                                    if time_col in row:
-                                        row[time_col] = f"🔥 {row[time_col]}"
-                    
-                    comparison_data.append(row)
-                
-                comparison_df = pd.DataFrame(comparison_data)
-                st.dataframe(comparison_df, use_container_width=True)
-                
-                # Download CSV button
-                csv_str = comparison_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Comparison as CSV",
-                    data=csv_str,
-                    file_name=f"split_comparison_{split_interval}m.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.info("No custom splits computed.")
-        
-        except Exception as e:
-            st.error(f"Error building split table: {e}")
-            import traceback
-            st.write(traceback.format_exc())
+            st.warning(f"⚠️ {len(excluded_ids)} trial(s) excluded (not comparable):\n\n" + "\n".join(excluded_info))
+            selected_trials = comparable_trials
+            selected_trial_ids = comparable_trials["trial_id"].tolist()
     
-    with tab_trend:
-        st.subheader("Development Trend")
+    if not selected_trials.empty:
+        # Sort by date
+        selected_trials = selected_trials.sort_values("session_date")
         
-        # Metric selector
-        metric = st.selectbox(
-            "Metric",
-            list(config.available_metrics.keys()),
-            format_func=lambda x: config.available_metrics.get(x, x)
+        # Create tabs
+        tab_overlay, tab_splits_cum, tab_splits_vel, tab_conditions, tab_trend = st.tabs(
+            ["Overlay Plot", "Split Times", "Split Velocities", "Conditions", "Trend"]
         )
         
-        try:
-            # Collect metric values for all selected trials
-            trend_data = []
+        with tab_overlay:
+            st.subheader("Velocity Profile Overlay - Mode A (Chronological)")
             
-            for trial_id in selected_trial_ids:
-                trial = selected_trials[selected_trials["trial_id"] == trial_id].iloc[0]
-                samples = db.get_samples_for_trial(trial_id)
-                
-                if samples.empty:
-                    continue
-                
-                # Compute metric value based on selection
-                from _app.splits import compute_custom_splits, find_zero_crossing, interpolate_at_distance
-                
-                t_origin = find_zero_crossing(samples)
-                
-                metric_value = None
-                
-                if metric == "peak_v_ms":
-                    metric_value = trial["peak_v_ms"]
-                elif metric.startswith("cumulative_time_"):
-                    # Extract distance from metric name (e.g., "cumulative_time_50m" -> 50)
-                    distance_str = metric.split("_")[-1]  # "50m"
-                    distance_val = float(distance_str.rstrip("m"))
-                    
-                    result = interpolate_at_distance(samples, distance_val)
-                    if result:
-                        t_at_d, _ = result
-                        metric_value = t_at_d - (t_origin or 0)
-                
-                elif metric.startswith("velocity_at_"):
-                    # Extract distance from metric name
-                    distance_str = metric.split("_")[-1]  # "50m"
-                    distance_val = float(distance_str.rstrip("m"))
-                    
-                    result = interpolate_at_distance(samples, distance_val)
-                    if result:
-                        _, v_at_d = result
-                        metric_value = v_at_d
-                
-                if metric_value is not None:
-                    trend_data.append({
-                        "Date": trial["session_date"],
-                        "Trial ID": trial_id,
-                        "Test Type": trial["test_type"],
-                        "Metric": metric_value,
-                    })
-            
-            if trend_data:
-                trend_df = pd.DataFrame(trend_data)
-                trend_df["Date"] = pd.to_datetime(trend_df["Date"])
-                trend_df = trend_df.sort_values("Date")
-                
-                # Plot trend
-                fig = px.line(
-                    trend_df,
-                    x="Date",
-                    y="Metric",
-                    hover_data=["Test Type"],
-                    markers=True,
-                    title=f"Trend: {config.available_metrics.get(metric, metric)}",
-                )
-                fig.update_yaxes(title_text=config.available_metrics.get(metric, metric))
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Summary stats
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Latest", f"{trend_df['Metric'].iloc[-1]:.2f}")
-                with col2:
-                    st.metric("Best", f"{trend_df['Metric'].max():.2f}")
-                with col3:
-                    change = trend_df['Metric'].iloc[-1] - trend_df['Metric'].iloc[0]
-                    st.metric("Change", f"{change:+.2f}")
-                
-                # Download button
-                csv_str = trend_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Trend Data as CSV",
-                    data=csv_str,
-                    file_name=f"trend_{metric}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.info("No data for selected metric.")
-        
-        except Exception as e:
-            st.error(f"Error computing trend: {e}")
-            import traceback
-            st.write(traceback.format_exc())
-    
-    with tab_detail:
-        st.subheader("Trial Detail")
-        
-        # Single trial selector
-        trial_options = {f"{t['session_date']} - {t['test_type']}": t["trial_id"] for _, t in selected_trials.iterrows()}
-        selected_detail_trial_label = st.selectbox("Select trial", list(trial_options.keys()))
-        selected_detail_trial_id = trial_options[selected_detail_trial_label]
-        
-        detail_trial = selected_trials[selected_trials["trial_id"] == selected_detail_trial_id].iloc[0]
-        
-        # Metadata block
-        st.write("#### Metadata")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.write(f"**Athlete**: {detail_trial['athlete_name']}")
-            st.write(f"**Date**: {detail_trial['session_date']}")
-            st.write(f"**Test Type**: {detail_trial['test_type']}")
-        with col2:
-            st.write(f"**Distance**: {detail_trial['distance_m']:.1f} m")
-            st.write(f"**Peak V**: {detail_trial['peak_v_ms']:.2f} m/s at {detail_trial['peak_v_distance_m']:.1f} m")
-            st.write(f"**Split Origin**: {detail_trial['split_origin_t_s']:.2f} s")
-        with col3:
-            st.write(f"**Surface**: {detail_trial['surface']}")
-            st.write(f"**Wind**: {detail_trial['wind']}")
-            st.write(f"**Notes**: {detail_trial['notes'] or '(none)'}")
-        
-        # Device split table
-        st.write("#### Device Splits")
-        device_splits = db.get_device_splits_for_trial(selected_detail_trial_id)
-        if not device_splits.empty:
-            st.dataframe(device_splits, use_container_width=True)
-        else:
-            st.info("No device splits recorded.")
-        
-        # Velocity-distance curve
-        st.write("#### Velocity Profile")
-        samples = db.get_samples_for_trial(selected_detail_trial_id)
-        if not samples.empty:
+            # Build overlay plot
             fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=samples["dist_filt_m"],
-                y=samples["vel_ms"],
-                mode="lines",
-                name="Velocity",
-                fill="tozeroy",
-            ))
+            
+            for _, trial in selected_trials.iterrows():
+                trial_id = trial["trial_id"]
+                samples = db.get_samples_for_trial(trial_id)
+                
+                if samples.empty:
+                    continue
+                
+                # Apply time-based valid window
+                distance_m = trial["distance_m"]
+                split_origin_t_s = trial["split_origin_t_s"]
+                t_reach = find_t_reach(samples, distance_m)
+                valid_mask = get_valid_window_mask(samples, split_origin_t_s, t_reach)
+                samples_valid = samples[valid_mask]
+                
+                # Create trace with date label
+                label = trial["session_date"] or "No date"
+                
+                fig.add_trace(go.Scatter(
+                    x=samples_valid["dist_filt_m"],
+                    y=samples_valid["vel_ms"],
+                    mode="lines",
+                    name=label,
+                    line=dict(width=2),
+                ))
+                
+                # Mark peak velocity
+                if trial["peak_v_ms"] and trial["peak_v_distance_m"]:
+                    fig.add_trace(go.Scatter(
+                        x=[trial["peak_v_distance_m"]],
+                        y=[trial["peak_v_ms"]],
+                        mode="markers",
+                        marker=dict(size=10, symbol="star", color="gold"),
+                        name=f"Peak {label}",
+                        showlegend=False,
+                    ))
+            
             fig.update_layout(
+                title="Velocity vs. Filtered Distance (Chronologically Ordered)",
                 xaxis_title="Filtered Distance (m)",
                 yaxis_title="Velocity (m/s)",
-                height=400,
+                hovermode="x unified",
+                height=600,
+                template="plotly_dark",
             )
             st.plotly_chart(fig, use_container_width=True)
         
-        # Custom split table
-        st.write("#### Custom Splits (at selected interval)")
-        try:
-            samples = db.get_samples_for_trial(selected_detail_trial_id)
-            if not samples.empty:
-                from _app.splits import compute_custom_splits, find_zero_crossing
+        with tab_splits_cum:
+            st.subheader(f"Cumulative Split Times at {split_interval}m Intervals")
+            
+            # Build Mode A matrix
+            cum_matrix, vel_matrix = build_split_matrix_mode_a(
+                selected_trials,
+                db,
+                split_interval,
+            )
+            
+            if not cum_matrix.empty:
+                st.dataframe(cum_matrix.style.format("{:.3f}"), use_container_width=True)
+                st.caption("Rows: Split distances | Columns: Session dates (chronological)")
                 
-                t_origin = find_zero_crossing(samples)
-                custom_splits = compute_custom_splits(
-                    samples,
-                    t_origin or 0,
-                    detail_trial["distance_m"],
-                    split_interval,
+                # Highlight fastest time per row
+                best_per_row = cum_matrix.min(axis=1)
+                st.write(f"**Fastest times per split**: {', '.join([f'{d:.0f}m: {t:.3f}s' for d, t in best_per_row.items()])}")
+                
+                # Download
+                csv_str = cum_matrix.to_csv()
+                st.download_button(
+                    "📥 Download Split Times as CSV",
+                    csv_str,
+                    f"mode_a_split_times_{split_interval}m.csv",
+                    "text/csv",
                 )
+            else:
+                st.warning("No split data available.")
+        
+        with tab_splits_vel:
+            st.subheader(f"Velocity at Split ({split_interval}m Intervals)")
+            
+            cum_matrix, vel_matrix = build_split_matrix_mode_a(
+                selected_trials,
+                db,
+                split_interval,
+            )
+            
+            if not vel_matrix.empty:
+                st.dataframe(vel_matrix.style.format("{:.2f}"), use_container_width=True)
+                st.caption("Rows: Split distances | Columns: Session dates (chronological)")
                 
-                if not custom_splits.empty:
-                    # Format and display
-                    display_splits = custom_splits.copy()
-                    display_splits["split_distance_m"] = display_splits["split_distance_m"].apply(lambda x: f"{x:.1f}m")
-                    display_splits["cumulative_time_s"] = display_splits["cumulative_time_s"].apply(lambda x: f"{x:.3f}s")
-                    display_splits["split_time_s"] = display_splits["split_time_s"].apply(lambda x: f"{x:.3f}s")
-                    display_splits["velocity_at_split_ms"] = display_splits["velocity_at_split_ms"].apply(lambda x: f"{x:.2f}m/s")
-                    display_splits["segment_avg_velocity_ms"] = display_splits["segment_avg_velocity_ms"].apply(lambda x: f"{x:.2f}m/s" if pd.notna(x) else "N/A")
+                # Highlight fastest velocity per row
+                best_per_row = vel_matrix.max(axis=1)
+                st.write(f"**Fastest velocities per split**: {', '.join([f'{d:.0f}m: {v:.2f}m/s' for d, v in best_per_row.items()])}")
+                
+                # Download
+                csv_str = vel_matrix.to_csv()
+                st.download_button(
+                    "📥 Download Split Velocities as CSV",
+                    csv_str,
+                    f"mode_a_split_velocities_{split_interval}m.csv",
+                    "text/csv",
+                )
+            else:
+                st.warning("No velocity data available.")
+        
+        with tab_conditions:
+            st.subheader("Trial Conditions")
+            
+            # Show conditions for each trial
+            for _, trial in selected_trials.iterrows():
+                with st.expander(f"📋 {trial['session_date']} - {trial['distance_m']:.0f}m"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Peak Velocity**: {trial['peak_v_ms']:.2f} m/s at {trial['peak_v_distance_m']:.1f}m")
+                        st.write(f"**Split Origin**: {trial['split_origin_t_s']:.2f} s")
+                    with col2:
+                        st.write(f"**Wind**: {trial.get('wind', 'N/A')}")
+                        st.write(f"**Surface**: {trial.get('surface', 'N/A')}")
                     
-                    display_splits.columns = ["Split Distance", "Cumulative Time", "Split Time", "Velocity at Split", "Avg Segment Velocity"]
-                    
-                    st.dataframe(display_splits, use_container_width=True)
-                    
-                    # Download button
-                    csv_str = custom_splits.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download Custom Splits as CSV",
-                        data=csv_str,
-                        file_name=f"custom_splits_{selected_detail_trial_id}_{split_interval}m.csv",
-                        mime="text/csv",
-                    )
+                    st.write(f"**Footwear**: {trial.get('footwear', 'N/A')}")
+                    st.write(f"**Venue**: {trial.get('venue', 'N/A')}")
+                    st.write(f"**Notes**: {trial.get('notes', '(none)')}")
+        
+        with tab_trend:
+            st.subheader("Development Trend Over Time")
+            
+            # Metric selector
+            metric = st.selectbox(
+                "Select metric",
+                ["peak_v_ms", "split_time_10m", "split_time_30m", "split_time_60m"],
+                format_func=lambda x: {"peak_v_ms": "Peak Velocity", "split_time_10m": "10m Time", "split_time_30m": "30m Time", "split_time_60m": "60m Time"}.get(x, x)
+            )
+            
+            # Build trend data
+            trend_data = []
+            for _, trial in selected_trials.iterrows():
+                trial_id = trial["trial_id"]
+                
+                if metric == "peak_v_ms":
+                    value = trial["peak_v_ms"]
                 else:
-                    st.info("No custom splits computed for this trial.")
-        except Exception as e:
-            st.error(f"Error computing custom splits: {e}")
+                    # Compute split time
+                    samples = db.get_samples_for_trial(trial_id)
+                    if not samples.empty:
+                        split_dist = int(metric.split("_")[2])
+                        split_origin_t_s = trial["split_origin_t_s"]
+                        t_reach = find_t_reach(samples, split_dist)
+                        valid_mask = get_valid_window_mask(samples, split_origin_t_s, t_reach)
+                        valid_samples = samples[valid_mask]
+                        splits = compute_custom_splits(valid_samples, split_origin_t_s or 0, split_dist, split_dist)
+                        value = splits["cumulative_time_s"].iloc[-1] if not splits.empty else None
+                    else:
+                        value = None
+                
+                if value is not None:
+                    trend_data.append({"Date": trial["session_date"], "Value": value})
+            
+            if trend_data:
+                trend_df = pd.DataFrame(trend_data).sort_values("Date")
+                
+                fig = px.line(
+                    trend_df,
+                    x="Date",
+                    y="Value",
+                    markers=True,
+                    title=f"Trend: {['Peak Velocity', '10m Time', '30m Time', '60m Time'][['peak_v_ms', 'split_time_10m', 'split_time_30m', 'split_time_60m'].index(metric)]}",
+                )
+                fig.update_layout(height=400, template="plotly_dark")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Stats
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Latest", f"{trend_df['Value'].iloc[-1]:.2f}")
+                with col2:
+                    best = trend_df['Value'].max() if "peak" in metric else trend_df['Value'].min()
+                    st.metric("Best", f"{best:.2f}")
+                with col3:
+                    change = trend_df['Value'].iloc[-1] - trend_df['Value'].iloc[0]
+                    st.metric("Change", f"{change:+.2f}")
+            else:
+                st.info("No trend data available.")
 
 else:
-    st.info("Select trials from the sidebar to view comparisons.")
-    st.write("""
-    ### Getting Started
+    # MODE B: Athlete Comparison
+    st.header("Mode B: Athlete Comparison")
     
-    1. Use the **Scan for new CSV files** button to import SprintScope exports from your data folders
-    2. Select an athlete and trial(s) from the sidebar
-    3. View velocity profiles, compare splits, and track development over time
+    selected_trials = db.get_trials_by_ids(selected_trial_ids)
     
-    ### Features
-    - **Overlay Plot**: Compare velocity profiles across multiple trials
-    - **Split Comparison**: View split times and velocities at chosen intervals
-    - **Development Trend**: Track how metrics improve over time
-    - **Trial Detail**: Deep dive into a single trial with full metadata and tables
-    """)
+    # Check comparability
+    is_comparable, comp_message = check_comparability(selected_trials)
+    st.info(comp_message)
+    
+    if not is_comparable:
+        # Filter to comparable trials
+        reference_trial = selected_trials.iloc[0]
+        comparable_trials, excluded_ids = filter_comparable_trials(selected_trials, reference_trial)
+        
+        if excluded_ids:
+            excluded_info = []
+            for trial_id in excluded_ids:
+                trial = selected_trials[selected_trials["trial_id"] == trial_id].iloc[0]
+                excluded_info.append(f"- {trial['athlete_name']} {trial['distance_m']:.0f}m from {trial['start_position']}")
+            
+            st.warning(f"⚠️ {len(excluded_ids)} trial(s) excluded (not comparable):\n\n" + "\n".join(excluded_info))
+            selected_trials = comparable_trials
+            selected_trial_ids = comparable_trials["trial_id"].tolist()
+    
+    if not selected_trials.empty:
+        # Create tabs
+        tab_overlay, tab_splits_cum, tab_splits_vel, tab_info = st.tabs(
+            ["Overlay Plot", "Split Times", "Split Velocities", "Trial Info"]
+        )
+        
+        with tab_overlay:
+            st.subheader("Velocity Profile Overlay - Mode B (Athlete Comparison)")
+            
+            # Build overlay plot
+            fig = go.Figure()
+            
+            for _, trial in selected_trials.iterrows():
+                trial_id = trial["trial_id"]
+                samples = db.get_samples_for_trial(trial_id)
+                
+                if samples.empty:
+                    continue
+                
+                # Apply time-based valid window
+                distance_m = trial["distance_m"]
+                split_origin_t_s = trial["split_origin_t_s"]
+                t_reach = find_t_reach(samples, distance_m)
+                valid_mask = get_valid_window_mask(samples, split_origin_t_s, t_reach)
+                samples_valid = samples[valid_mask]
+                
+                # Create trace with athlete label
+                label = trial["athlete_name"]
+                
+                fig.add_trace(go.Scatter(
+                    x=samples_valid["dist_filt_m"],
+                    y=samples_valid["vel_ms"],
+                    mode="lines",
+                    name=label,
+                    line=dict(width=2.5),
+                ))
+                
+                # Mark peak velocity
+                if trial["peak_v_ms"] and trial["peak_v_distance_m"]:
+                    fig.add_trace(go.Scatter(
+                        x=[trial["peak_v_distance_m"]],
+                        y=[trial["peak_v_ms"]],
+                        mode="markers",
+                        marker=dict(size=10, symbol="star", color="gold"),
+                        name=f"Peak {label}",
+                        showlegend=False,
+                    ))
+            
+            fig.update_layout(
+                title="Velocity vs. Filtered Distance (Athlete Comparison)",
+                xaxis_title="Filtered Distance (m)",
+                yaxis_title="Velocity (m/s)",
+                hovermode="x unified",
+                height=600,
+                template="plotly_dark",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with tab_splits_cum:
+            st.subheader(f"Cumulative Split Times at {split_interval}m Intervals")
+            
+            # Build Mode B matrix
+            cum_matrix, vel_matrix, athlete_info = build_split_matrix_mode_b(
+                selected_trials,
+                db,
+                split_interval,
+            )
+            
+            if not cum_matrix.empty:
+                st.dataframe(cum_matrix.style.format("{:.3f}"), use_container_width=True)
+                st.caption("Rows: Split distances | Columns: Athletes (each column = one chosen trial)")
+                
+                # Highlight fastest time per row
+                best_per_row = cum_matrix.min(axis=1)
+                st.write(f"**Fastest times per split**: {', '.join([f'{d:.0f}m: {t:.3f}s' for d, t in best_per_row.items()])}")
+                
+                # Download
+                csv_str = cum_matrix.to_csv()
+                st.download_button(
+                    "📥 Download Split Times as CSV",
+                    csv_str,
+                    f"mode_b_split_times_{split_interval}m.csv",
+                    "text/csv",
+                )
+            else:
+                st.warning("No split data available.")
+        
+        with tab_splits_vel:
+            st.subheader(f"Velocity at Split ({split_interval}m Intervals)")
+            
+            cum_matrix, vel_matrix, athlete_info = build_split_matrix_mode_b(
+                selected_trials,
+                db,
+                split_interval,
+            )
+            
+            if not vel_matrix.empty:
+                st.dataframe(vel_matrix.style.format("{:.2f}"), use_container_width=True)
+                st.caption("Rows: Split distances | Columns: Athletes (each column = one chosen trial)")
+                
+                # Highlight fastest velocity per row
+                best_per_row = vel_matrix.max(axis=1)
+                st.write(f"**Fastest velocities per split**: {', '.join([f'{d:.0f}m: {v:.2f}m/s' for d, v in best_per_row.items()])}")
+                
+                # Download
+                csv_str = vel_matrix.to_csv()
+                st.download_button(
+                    "📥 Download Split Velocities as CSV",
+                    csv_str,
+                    f"mode_b_split_velocities_{split_interval}m.csv",
+                    "text/csv",
+                )
+            else:
+                st.warning("No velocity data available.")
+        
+        with tab_info:
+            st.subheader("Comparison Trial Info")
+            
+            # Show athlete info
+            for _, trial in selected_trials.iterrows():
+                with st.expander(f"👤 {trial['athlete_name']}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Peak Velocity**: {trial['peak_v_ms']:.2f} m/s")
+                        st.write(f"**Peak Distance**: {trial['peak_v_distance_m']:.1f} m")
+                    with col2:
+                        st.write(f"**Test Date**: {trial['session_date']}")
+                        st.write(f"**Distance**: {trial['distance_m']:.0f} m")
+                    
+                    st.write(f"**Conditions**: {trial.get('wind', 'N/A')} wind, {trial.get('surface', 'N/A')} surface")
+
