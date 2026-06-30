@@ -556,9 +556,10 @@ elif "Mode A" in comparison_mode:
                     file_name=generate_filename(selected_trials, "Mode A"),
                     mime="application/pdf",
                 )
+            except RuntimeError as e:
+                st.error(f"PDF generation failed: {str(e)}")
             except Exception as e:
-                st.error(f"Error generating PDF report: {e}")
-                st.info("Ensure weasyprint is installed: `pip install weasyprint`")
+                st.error(f"Unexpected error: {e}")
 
 else:
     # MODE B: Athlete Comparison
@@ -767,7 +768,8 @@ else:
                     file_name=generate_filename(selected_trials, "Mode B"),
                     mime="application/pdf",
                 )
+            except RuntimeError as e:
+                st.error(f"PDF generation failed: {str(e)}")
             except Exception as e:
-                st.error(f"Error generating PDF report: {e}")
-                st.info("Ensure weasyprint is installed: `pip install weasyprint`")
+                st.error(f"Unexpected error: {e}")
 

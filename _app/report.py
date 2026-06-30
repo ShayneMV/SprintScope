@@ -479,6 +479,24 @@ def generate_report_html(
     .page {{ padding: 0; }}
     .page-break {{ page-break-before: always; }}
   }}
+  
+  /* Ensure footer always appears and prevent orphan pages */
+  html, body {{
+    height: 100%;
+  }}
+  body {{
+    display: flex;
+    flex-direction: column;
+  }}
+  .page {{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }}
+  .provenance {{
+    margin-top: auto;
+    page-break-inside: avoid;
+  }}
 </style>
 </head>
 <body>
@@ -505,14 +523,16 @@ def generate_report_html(
 
   <div class="eyebrow">Velocity at Split</div>
 {vel_html}
+  <div class="table-note">Best velocity per distance highlighted. Empty cells use a hyphen.</div>
 
 {notes_html}
 
-  <div class="provenance">
-    Data: SprintScope at 200 Hz, Butterworth order 2. Operator {operator}. Team Saudi Athletics - Performance Analysis
-  </div>
-
 </div>
+
+<div class="provenance">
+  Data: SprintScope at 200 Hz, Butterworth order 2. Operator {operator}. Team Saudi Athletics - Performance Analysis
+</div>
+
 </body>
 </html>
 '''
@@ -522,10 +542,16 @@ def generate_report_html(
 
 def generate_pdf_from_html(html_content: str) -> bytes:
     """
-    Convert HTML to PDF using weasyprint, or fallback to basic approach.
+    Convert HTML to PDF using weasyprint.
+    
+    Note: On Windows, may fail if GTK libraries are not installed.
+    Fallback: download HTML and print-to-PDF using your browser.
     
     Returns:
         PDF file as bytes
+        
+    Raises:
+        RuntimeError with instructions for Windows users
     """
     try:
         from weasyprint import HTML, CSS
@@ -533,12 +559,23 @@ def generate_pdf_from_html(html_content: str) -> bytes:
         # Create PDF from HTML string
         pdf = HTML(string=html_content).write_pdf()
         return pdf
-    except ImportError:
-        # Fallback: return error message
-        # In production, could use other methods like selenium/headless chrome
-        raise ImportError(
+    except ImportError as e:
+        raise RuntimeError(
             "weasyprint not installed. Install with: pip install weasyprint"
-        )
+        ) from e
+    except Exception as e:
+        # Handle GTK library errors on Windows and other system-level issues
+        error_msg = str(e).lower()
+        if "libgobject" in error_msg or "dll" in error_msg or "error 0x" in error_msg:
+            raise RuntimeError(
+                "PDF generation requires system libraries not available on this system.\n\n"
+                "Workaround: Download the HTML report instead, then use your browser's "
+                "'Print to PDF' feature (Ctrl+P → Save as PDF).\n\n"
+                "Technical: weasyprint requires GTK libraries which are not available on Windows. "
+                "For deployment, consider using a Linux container or headless browser service."
+            ) from e
+        else:
+            raise RuntimeError(f"PDF generation failed: {e}") from e
 
 
 def generate_filename(trials_df: pd.DataFrame, mode: str) -> str:
