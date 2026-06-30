@@ -156,11 +156,26 @@ def interpolate_at_distance(
     Find the time when dist_filt_m reaches target_distance,
     using linear interpolation.
     
+    Also handles the endpoint case: if target_distance equals or exceeds the max distance,
+    return the sample at maximum distance.
+    
     Returns (t_s, vel_ms) at that distance, or (None, None) if distance not reached.
     """
+    if samples_df.empty:
+        return None, None
+    
     dist_filt = samples_df["dist_filt_m"].values
     t_s = samples_df["t_s"].values
     vel_ms = samples_df["vel_ms"].values
+    
+    # Find max distance (forward progress)
+    max_dist = np.max(dist_filt)
+    
+    # Check if target is at or beyond the maximum distance
+    if target_distance >= max_dist - 1e-9:
+        # Return the sample at maximum distance
+        max_idx = np.argmax(dist_filt)
+        return float(t_s[max_idx]), float(vel_ms[max_idx])
     
     # Find bracketing samples
     for i in range(len(dist_filt) - 1):
@@ -199,6 +214,9 @@ def compute_custom_splits(
     - Compute velocity_at(d) = instantaneous velocity at distance d
     - Compute segment_avg_velocity = interval / split_time
     
+    INCLUSIVE of distance_m: Final split row is always at exactly distance_m.
+    If interval does not divide evenly, still appends a final row at distance_m.
+    
     Only uses samples within valid time window [split_origin_t_s, t_reach].
     
     Returns DataFrame with columns:
@@ -218,13 +236,31 @@ def compute_custom_splits(
     
     splits = []
     prev_cumulative_time = 0.0
+    split_distances = []
     
-    for multiplier in range(1, int(distance_m / split_interval_m) + 1):
-        target_distance = multiplier * split_interval_m
-        
-        if target_distance > distance_m:
+    # Generate all split distances up to distance_m
+    d = split_interval_m
+    while d <= distance_m + 1e-9:  # Small epsilon for floating point comparison
+        split_distances.append(min(d, distance_m))  # Cap at distance_m to avoid overshoot
+        if d >= distance_m - 1e-9:
             break
-        
+        d += split_interval_m
+    
+    # Ensure final split is exactly at distance_m
+    if not split_distances or abs(split_distances[-1] - distance_m) > 1e-9:
+        split_distances.append(distance_m)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_distances = []
+    for d in split_distances:
+        d_rounded = round(d, 9)  # Round to avoid floating point duplicates
+        if d_rounded not in seen:
+            seen.add(d_rounded)
+            unique_distances.append(d)
+    
+    # Compute splits for each distance
+    for target_distance in unique_distances:
         # Find time at this distance using only valid samples
         result = interpolate_at_distance(valid_samples, target_distance)
         if result is None or result == (None, None):
@@ -239,7 +275,7 @@ def compute_custom_splits(
         cumulative_time = t_at_d - split_origin_t_s
         
         # Split time is the difference from previous split
-        if multiplier == 1:
+        if not splits:
             split_time = cumulative_time
         else:
             split_time = cumulative_time - prev_cumulative_time
