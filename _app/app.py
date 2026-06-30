@@ -24,6 +24,11 @@ from _app.comparison import (
     get_trial_conditions_row,
     format_matrix_for_display,
 )
+from _app.report import (
+    generate_report_html,
+    generate_pdf_from_html,
+    generate_filename,
+)
 
 
 # Configuration and initialization
@@ -499,6 +504,61 @@ elif "Mode A" in comparison_mode:
                     st.metric("Change", f"{change:+.2f}")
             else:
                 st.info("No trend data available.")
+        
+        # ===== EXPORT REPORT (Mode A) =====
+        st.divider()
+        st.subheader("Export Session Report")
+        
+        analyst_notes = st.text_area(
+            "Analyst notes (optional)",
+            value="",
+            height=100,
+            help="Free-text narrative for the report. If empty, no notes section will appear in the report.",
+            key="analyst_notes_mode_a",
+        )
+        
+        col_html, col_pdf = st.columns(2)
+        
+        with col_html:
+            try:
+                report_html = generate_report_html(
+                    selected_trials,
+                    db,
+                    split_interval,
+                    "Mode A",
+                    analyst_notes,
+                )
+                
+                st.download_button(
+                    label="📥 Download Report as HTML",
+                    data=report_html,
+                    file_name=generate_filename(selected_trials, "Mode A").replace(".pdf", ".html"),
+                    mime="text/html",
+                )
+            except Exception as e:
+                st.error(f"Error generating HTML report: {e}")
+        
+        with col_pdf:
+            try:
+                report_html = generate_report_html(
+                    selected_trials,
+                    db,
+                    split_interval,
+                    "Mode A",
+                    analyst_notes,
+                )
+                
+                pdf_bytes = generate_pdf_from_html(report_html)
+                
+                st.download_button(
+                    label="📥 Download Report as PDF",
+                    data=pdf_bytes,
+                    file_name=generate_filename(selected_trials, "Mode A"),
+                    mime="application/pdf",
+                )
+            except Exception as e:
+                st.error(f"Error generating PDF report: {e}")
+                st.info("Ensure weasyprint is installed: `pip install weasyprint`")
 
 else:
     # MODE B: Athlete Comparison
@@ -655,4 +715,59 @@ else:
                         st.write(f"**Distance**: {trial['distance_m']:.0f} m")
                     
                     st.write(f"**Conditions**: {trial.get('wind', 'N/A')} wind, {trial.get('surface', 'N/A')} surface")
+        
+        # ===== EXPORT REPORT (Mode B) =====
+        st.divider()
+        st.subheader("Export Session Report")
+        
+        analyst_notes = st.text_area(
+            "Analyst notes (optional)",
+            value="",
+            height=100,
+            help="Free-text narrative for the report. If empty, no notes section will appear in the report.",
+            key="analyst_notes_mode_b",
+        )
+        
+        col_html, col_pdf = st.columns(2)
+        
+        with col_html:
+            try:
+                report_html = generate_report_html(
+                    selected_trials,
+                    db,
+                    split_interval,
+                    "Mode B",
+                    analyst_notes,
+                )
+                
+                st.download_button(
+                    label="📥 Download Report as HTML",
+                    data=report_html,
+                    file_name=generate_filename(selected_trials, "Mode B").replace(".pdf", ".html"),
+                    mime="text/html",
+                )
+            except Exception as e:
+                st.error(f"Error generating HTML report: {e}")
+        
+        with col_pdf:
+            try:
+                report_html = generate_report_html(
+                    selected_trials,
+                    db,
+                    split_interval,
+                    "Mode B",
+                    analyst_notes,
+                )
+                
+                pdf_bytes = generate_pdf_from_html(report_html)
+                
+                st.download_button(
+                    label="📥 Download Report as PDF",
+                    data=pdf_bytes,
+                    file_name=generate_filename(selected_trials, "Mode B"),
+                    mime="application/pdf",
+                )
+            except Exception as e:
+                st.error(f"Error generating PDF report: {e}")
+                st.info("Ensure weasyprint is installed: `pip install weasyprint`")
 
