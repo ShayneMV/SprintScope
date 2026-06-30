@@ -1,0 +1,46 @@
+# Laveg App Configuration
+
+[paths]
+# Path to the data root (contains event group folders: sprints/, hurdles/, etc.)
+# Default: parent of _app folder
+# On Windows: C:\Users\s.vial\OneDrive - Team Saudi\Documents\Athletics\Laveg\Laveg script
+# This should be set to your OneDrive path or local data folder
+data_root = "C:\\Users\\s.vial\\OneDrive - Team Saudi\\Documents\\Athletics\\Laveg\\Laveg script"
+
+# Path to the SQLite database file
+# IMPORTANT: Must be outside OneDrive to avoid corruption
+# Default: %LOCALAPPDATA%\laveg_app\laveg.sqlite on Windows
+# or ~/.laveg_app/laveg.sqlite on Unix
+db_path = ""
+
+[tolerances]
+# Overshoot tolerance for distance check (as fraction, e.g. 0.25 = 25%)
+# Run-out past the finish line up to this much is considered normal
+overshoot_tolerance = 0.25
+
+# Validation tolerance for custom splits vs device splits (in seconds)
+# If custom split cumulative time differs from device split by more than this, log a warning
+validation_tolerance_s = 0.03
+
+# Short trial threshold: if filtered distance undershoots stated distance, flag it
+# This is automatic; no tolerance needed (any undershoot = flag)
+
+[parsing]
+# Recognized event token suffixes (stripped from athlete name)
+# Used to clean athlete names for grouping
+event_tokens = ["100m", "200m", "400m", "800m", "1500m", "60m", "110mH", "400mH", "100mH", "300mH", "LJ", "TJ", "PV", "SP", "HJ", "DT", "HT", "JT", "WT"]
+
+[ui]
+# Default split interval for custom splits (if trial doesn't specify)
+default_split_interval_m = 10.0
+
+# Metrics available in trend view
+[ui.available_metrics]
+peak_v_ms = "Peak Velocity (m/s)"
+cumulative_time_10m = "Time to 10m (s)"
+cumulative_time_30m = "Time to 30m (s)"
+cumulative_time_50m = "Time to 50m (s)"
+cumulative_time_60m = "Time to 60m (s)"
+velocity_at_10m = "Velocity at 10m (m/s)"
+velocity_at_50m = "Velocity at 50m (m/s)"
+velocity_at_60m = "Velocity at 60m (m/s)"

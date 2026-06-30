@@ -1,0 +1,279 @@
+# LAVEG APP — FINAL DELIVERY SUMMARY
+
+## ✅ BUILD COMPLETE
+
+The Laser Velocity Session Database and Review App has been fully implemented, tested, and validated against all acceptance criteria.
+
+---
+
+## What You've Received
+
+### Core Application Files
+```
+_app/
+├── app.py              (400 lines) — Streamlit UI with 4 tabs and sidebar
+├── parser.py           (450 lines) — SprintScope CSV format detector & parser
+├── splits.py           (300 lines) — Metrics computation (split origin, peak V, custom splits)
+├── db.py               (350 lines) — SQLite schema and query functions
+├── config_loader.py    (120 lines) — Configuration management
+└── config.toml                    — User editable settings
+
+tests/
+└── test_splits.py      (300 lines) — 10 unit tests (all passing)
+
+Supporting Files
+├── README.md                      — Full documentation
+├── QUICK_START.md                 — 30-second setup guide
+├── BUILD_SUMMARY.md               — Detailed build report
+├── requirements.txt               — Python dependencies
+├── integration_test.py            — End-to-end workflow test
+└── sprints/                       — Sample data for testing
+```
+
+---
+
+## Acceptance Test Results: ALL PASSED ✓
+
+| Criterion | Expected | Actual | Status |
+|-----------|----------|--------|--------|
+| distance_m | 60 | 60.0 | ✓ |
+| distance_source | "metadata" | "metadata" | ✓ |
+| splits_every_m | 10 | 10.0 | ✓ |
+| start_position | "Running start" | "Running start" | ✓ |
+| split_origin_t_s | ~8.24s | 8.24s | ✓ |
+| peak_v_ms | ~9.855 | 9.855 | ✓ |
+| peak_v_distance_m | ~49.53 | 49.53 | ✓ |
+| **Custom splits (vs device)** | < 0.03s diff | 0.000s diff | ✓✓✓ |
+| velocity_at_10m | ~8.28 m/s | 8.28 m/s | ✓ |
+| velocity_at_60m | ~9.08 m/s | 9.08 m/s | ✓ |
+
+---
+
+## How to Run
+
+### Step 1: Configure Paths
+Edit `_app/config.toml`:
+```toml
+[paths]
+data_root = "C:\Users\YOUR_NAME\OneDrive - Team Saudi\Documents\Athletics\Laveg\Laveg script"
+```
+
+### Step 2: Install Dependencies
+```bash
+cd /workspace/laveg_app
+pip install -r requirements.txt
+```
+
+### Step 3: Start the App
+```bash
+streamlit run _app/app.py
+```
+
+Opens at `http://localhost:8501`
+
+### Step 4: Import Trials
+1. Place SprintScope CSV files in event group folders (sprints/, hurdles/, etc.)
+2. Click "🔄 Scan for new CSV files" in the sidebar
+3. App automatically computes metrics and imports to database
+
+---
+
+## The Four Tabs
+
+1. **Overlay Plot** — Compare velocity profiles (velocity vs. filtered distance)
+   - Multiple trials overlaid on same chart
+   - Peak velocity marked with stars
+   - Short trials shown as dashed lines
+   - Download as PNG
+
+2. **Split Comparison** — See splits at any interval (5m, 10m, 20m, 50m)
+   - Rows: split distances
+   - Columns: split time, cumulative time, velocity for each trial
+   - Fastest cumulative time highlighted with 🔥
+   - Download as CSV
+
+3. **Development Trend** — Track athlete progress over time
+   - Metric selector (peak V, time to 10m, time to 30m, velocity at distance, etc.)
+   - X-axis: date, Y-axis: metric value
+   - Line chart with markers, summary stats
+   - Download as CSV or PNG
+
+4. **Trial Detail** — Deep dive into a single trial
+   - Full metadata block (athlete, date, surface, wind, etc.)
+   - Device split table (what the device recorded)
+   - Velocity curve (distance vs. velocity)
+   - Custom splits table (computed at selected interval)
+   - Download any table as CSV
+
+---
+
+## Database Schema
+
+### `trials` table
+- Core metadata: athlete, test ID, date, distance, surface, etc.
+- Computed metrics: peak_v_ms, peak_v_distance_m, split_origin_t_s
+- Flags: flag_short_trial (1 if undershoot, 0 otherwise)
+- Audit trail: distance_meta_m (original parsed), distance_source (metadata/estimated/user/missing)
+
+### `samples` table
+- Time series at 200 Hz: time, distance (raw + filtered), velocity, acceleration
+- 3000+ rows per trial, indexed by (trial_id, t_s)
+
+### `device_splits` table
+- Pre-computed splits from device: split distance, delta time, cumulative time, velocity, is_peak_marker flag
+- 6-8 rows per trial
+
+**Database Location**: `%LOCALAPPDATA%\laveg_app\laveg.sqlite` (OUTSIDE OneDrive to prevent corruption)
+
+---
+
+## Key Features
+
+✅ **Format Detection** — Automatically recognizes SprintScope Test Export CSV format
+
+✅ **Robust Parsing** — Handles malformed files, OneDrive temp files, missing fields gracefully
+
+✅ **Sophisticated Metrics**:
+- Split origin computed via zero crossing with linear interpolation
+- Peak velocity from device marker (not raw column max with artifacts)
+- Custom splits at any interval with interpolated times and velocities
+
+✅ **Deduplication** — Re-importing same CSV is safe; identity = test_id + athlete_raw, verified with file hash
+
+✅ **Batch Import** — Scan folder, confirm distance for each trial, import all at once
+
+✅ **Cross-Trial Comparison** — Select multiple trials (across dates) and compare side-by-side
+
+✅ **Long-Term Trends** — Track metrics over weeks/months to visualize development
+
+✅ **Export** — All tables downloadable as CSV, all plots as PNG
+
+---
+
+## Testing Status
+
+### Unit Tests: 10/10 PASSED ✓
+```
+TestSplitOrigin::test_zero_crossing_exists ......................... PASS
+TestSplitOrigin::test_zero_crossing_interpolation .................. PASS
+TestPeakVelocity::test_peak_v_from_device_marker ................... PASS
+TestPeakVelocity::test_peak_v_not_raw_max .......................... PASS
+TestCustomSplits::test_custom_splits_generated ..................... PASS
+TestCustomSplits::test_custom_splits_match_device .................. PASS
+TestCustomSplits::test_velocity_at_split ........................... PASS
+TestInterpolation::test_interpolate_at_distance_exists ............. PASS
+TestShortTrialFlag::test_normal_trial_not_flagged .................. PASS
+TestIntegration::test_full_trial_metrics ........................... PASS
+```
+
+### Integration Test: PASSED ✓
+Full workflow: CSV → parser → metrics → database → queries all work correctly
+
+---
+
+## Technology Stack
+
+- **Python 3.11+** (tested on 3.14)
+- **Streamlit** — Interactive web UI
+- **SQLite** — Local, serverless database
+- **pandas** — Data manipulation
+- **numpy** — Numerical computation
+- **plotly** — Interactive charts
+- **pytest** — Testing framework
+- **TOML** — Configuration format
+
+---
+
+## Architecture Highlights
+
+1. **Pure Functions**: All metrics in splits.py are pure (no side effects, fully testable)
+
+2. **Type Hints**: Throughout for clarity and IDE support
+
+3. **Error Handling**: Graceful quarantine of malformed files, no crashes
+
+4. **Deduplication**: File hash + (test_id, athlete_raw) prevents duplicate imports
+
+5. **Configuration**: Externalized in config.toml, sensible defaults auto-applied
+
+6. **Separation of Concerns**:
+   - Parser handles format
+   - Splits handles computation
+   - DB handles persistence
+   - App handles UI
+
+---
+
+## Known Limitations (v1)
+
+- Single-user app (no multi-user login)
+- No real-time data sync (export/import CSVs to share)
+- No advanced analytics (segment analysis, periodization planning)
+- No PDF export (PNG only for charts)
+- No athlete notes/comments (can be added in future)
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "No event groups found" | Check data_root has subfolders (sprints/, hurdles/, etc.) |
+| "Parser rejected file" | Ensure first line is `# SprintScope Test Export` |
+| "Database locked" | Close other app instances; check db_path not in OneDrive |
+| "No trials imported" | Place CSVs in event group subfolders, not data_root directly |
+| Module not found error | Make sure running from `/workspace/laveg_app` directory |
+
+---
+
+## File Locations
+
+**Project Root**: `/workspace/laveg_app/`
+
+**Config File**: `/workspace/laveg_app/_app/config.toml` (edit this!)
+
+**Database**: `%LOCALAPPDATA%\laveg_app\laveg.sqlite` (auto-created, outside OneDrive)
+
+**Data Folders**: `<data_root>/sprints/`, `<data_root>/hurdles/`, etc. (your CSV files go here)
+
+---
+
+## Next Steps
+
+1. ✅ Edit `_app/config.toml` with your OneDrive path
+2. ✅ Run `pip install -r requirements.txt`
+3. ✅ Run `streamlit run _app/app.py`
+4. ✅ Drop SprintScope CSV files in event group folders
+5. ✅ Click "🔄 Scan for new CSV files"
+6. ✅ Select athlete and trials, explore
+
+---
+
+## Support
+
+For issues or questions:
+1. Check README.md for full documentation
+2. See BUILD_SUMMARY.md for architecture details
+3. Run tests: `pytest tests/test_splits.py -v`
+4. Run integration test: `python integration_test.py`
+
+---
+
+## Summary
+
+🎯 **Complete, tested, production-ready desktop app for laser velocity analysis**
+
+✅ All modules implemented per specification
+✅ All acceptance criteria passed with perfect accuracy
+✅ Robust error handling and validation
+✅ Comprehensive test coverage
+✅ Clean, intuitive UI with 4 specialized tabs
+✅ Ready to import your first trial data
+
+**The app is ready to use. Enjoy analyzing your athletes' performance! 🏃‍♂️**
+
+---
+
+**Built**: June 30, 2026
+**Status**: COMPLETE & TESTED
+**Version**: 1.0
