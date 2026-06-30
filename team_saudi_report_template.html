@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Team Saudi Report Template</title>
+<!--
+  TEAM SAUDI SPRINT REPORT - STYLING TEMPLATE
+  ===========================================
+  Purpose: this file defines the Team Saudi visual system (palette, type, header,
+  metadata strip, section headings, tables, notes, footer, print rules) for the
+  laser session report. The AGENT should LIFT THE CSS AND THE COMPONENT MARKUP
+  from here and fill it with real data from the active comparison mode.
+
+  DO:
+    - reuse :root variables, the .brand header, .meta-strip, .eyebrow section
+      headings, .matrix / .split-table styles, .notes block, and .provenance footer.
+    - keep the A4 print rules and the page structure.
+  DO NOT:
+    - change the palette (#006C35 green, #9C7C2E gold) or invent a new layout.
+    - copy any per-athlete-page structure from older reports; this report is
+      mode-driven (columns = dates in Mode A, athletes in Mode B).
+    - auto-write any narrative. The .notes block renders an analyst free-text
+      field; if that field is empty, render nothing in its place.
+  The sample content below is placeholder so the look is visible. Replace it.
+  No em or en dashes anywhere. Empty numeric cells use a plain hyphen.
+-->
+<style>
+  :root {
+    --green: #006C35;
+    --gold: #9C7C2E;
+    --ink: #1c1f23;
+    --muted: #6b7280;
+    --rule: #e3e6ea;
+    --rule-strong: #c9ced5;
+    --bg: #ffffff;
+    --highlight-bg: #f3efe2;   /* subtle gold wash for best-in-row cell */
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  @page {
+    size: A4;
+    margin: 16mm 14mm 14mm 14mm;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page { max-width: 980px; margin: 0 auto; padding: 24px 28px; }
+
+  /* ---------- Header ---------- */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2px solid var(--green);
+    padding-bottom: 12px;
+  }
+  .header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--green);
+    letter-spacing: -0.01em;
+  }
+  .header .subtitle {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .brand { text-align: right; line-height: 1.3; white-space: nowrap; }
+  .brand .brand-mark {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+  }
+  .brand .brand-mark .saudi { color: var(--gold); }
+  .brand .brand-sub { font-size: 11px; color: var(--muted); }
+
+  /* ---------- Metadata strip ---------- */
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 26px;
+    background: #f7f8f9;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-top: 16px;
+  }
+  .meta-item { min-width: 90px; }
+  .meta-item .label {
+    font-size: 9.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .meta-item .value { font-size: 13px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+
+  /* ---------- Section heading (eyebrow) ---------- */
+  .eyebrow {
+    margin: 26px 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--green);
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 6px;
+  }
+
+  /* ---------- Figure / plot ---------- */
+  figure { margin: 0; }
+  .plot-frame {
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+  }
+  .plot-frame img { max-width: 100%; height: auto; }
+  figcaption {
+    margin-top: 10px;
+    font-size: 11.5px;
+    color: var(--ink);
+  }
+  figcaption .lead { font-weight: 700; }
+
+  /* ---------- Tables (shared) ---------- */
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td {
+    padding: 6px 9px;
+    font-size: 11.5px;
+    border-bottom: 1px solid var(--rule);
+    text-align: right;
+  }
+  th {
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+    border-bottom: 1px solid var(--rule-strong);
+    background: #fbfbfc;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule-strong); }
+
+  /* best value in a matrix row */
+  td.best { background: var(--highlight-bg); font-weight: 700; color: var(--green); }
+  /* peak velocity marker row in a per-trial detail table */
+  tr.peak td { background: var(--highlight-bg); font-weight: 700; }
+
+  .table-note { font-size: 10px; color: var(--muted); margin-top: 6px; }
+
+  /* two stacked per-trial tables side by side when 2-3 trials */
+  .table-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+  /* ---------- Analyst notes (narrative) ---------- */
+  .notes {
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-left: 3px solid var(--gold);
+    background: #fbfaf6;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  /* If the analyst notes field is empty, the agent renders NOTHING here. */
+
+  /* ---------- Footer ---------- */
+  .provenance {
+    margin-top: 26px;
+    padding-top: 10px;
+    border-top: 1px solid var(--rule);
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  @media print {
+    .page { padding: 0; }
+    .page-break { page-break-before: always; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ===== HEADER (templated; fill title and subtitle) ===== -->
+  <div class="header">
+    <div>
+      <h1>Sprint Session: Performance Analysis</h1>
+      <!-- Mode A: "<athlete> · <date range> · SprintScope laser, 200 Hz"
+           Mode B: "<cohort> · <date> · representative trial: best · SprintScope laser, 200 Hz" -->
+      <div class="subtitle">Abdulaziz Atafi · last six sessions · SprintScope laser, 200 Hz</div>
+    </div>
+    <div class="brand">
+      <div class="brand-mark">TEAM <span class="saudi">SAUDI</span></div>
+      <div class="brand-sub">Athletics &amp; Para Athletics</div>
+    </div>
+  </div>
+
+  <!-- ===== METADATA STRIP (fill from trial metadata; drop hurdle height) ===== -->
+  <div class="meta-strip">
+    <div class="meta-item"><div class="label">Athlete</div><div class="value">Abdulaziz Atafi</div></div>
+    <div class="meta-item"><div class="label">Distance</div><div class="value">30 m</div></div>
+    <div class="meta-item"><div class="label">Start</div><div class="value">Block start</div></div>
+    <div class="meta-item"><div class="label">Surface</div><div class="value">Track</div></div>
+    <div class="meta-item"><div class="label">Footwear</div><div class="value">Spikes</div></div>
+    <div class="meta-item"><div class="label">Operator</div><div class="value">Shayne Vial</div></div>
+  </div>
+
+  <!-- ===== PLOT ===== -->
+  <div class="eyebrow">Velocity vs Distance</div>
+  <figure>
+    <div class="plot-frame">
+      <!-- Agent: embed the overlay plot as a static image (base64 PNG from
+           matplotlib, or plotly+kaleido). MUST be built from the Section 8.1b
+           valid-window series. Legend by date (Mode A) or athlete (Mode B). -->
+      <img src="data:image/png;base64,PLACEHOLDER" alt="Velocity vs distance overlay">
+    </div>
+    <figcaption>
+      <span class="lead">Overlay of the selected trials.</span>
+      This caption is fixed descriptive text only. Any interpretation belongs in the analyst notes below, not here.
+    </figcaption>
+  </figure>
+
+  <!-- ===== SPLIT MATRIX (4+ trials: columns = dates [Mode A] or athletes [Mode B]) ===== -->
+  <div class="eyebrow">Cumulative Split Times</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Distance [m]</th>
+        <th>18 Jun</th><th>21 Jun</th><th>24 Jun</th><th>27 Jun</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>10</td><td>1.88</td><td class="best">1.84</td><td>1.86</td><td>1.85</td></tr>
+      <tr><td>20</td><td>3.02</td><td>2.99</td><td class="best">2.97</td><td>2.98</td></tr>
+      <tr><td>30</td><td>4.05</td><td>4.02</td><td>4.01</td><td class="best">4.00</td></tr>
+    </tbody>
+  </table>
+  <div class="table-note">Best time per distance highlighted. Empty cells use a hyphen.</div>
+
+  <div class="eyebrow">Velocity at Split</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Distance [m]</th>
+        <th>18 Jun</th><th>21 Jun</th><th>24 Jun</th><th>27 Jun</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>10</td><td>8.10</td><td>8.18</td><td>8.15</td><td class="best">8.21</td></tr>
+      <tr><td>20</td><td>9.20</td><td>9.28</td><td class="best">9.31</td><td>9.27</td></tr>
+      <tr><td>30</td><td>9.55</td><td>9.60</td><td>9.62</td><td class="best">9.66</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===== ALTERNATIVE: 2-3 trials use stacked per-trial detail tables instead =====
+  <div class="table-grid">
+    <div>
+      <div class="eyebrow">24 Jun</div>
+      <table>
+        <thead><tr><th>Dist</th><th>Time</th><th>Split</th><th>Vel</th></tr></thead>
+        <tbody>
+          <tr><td>10</td><td>1.86</td><td>1.86</td><td>8.15</td></tr>
+          <tr><td>20</td><td>2.97</td><td>1.11</td><td>9.31</td></tr>
+          <tr class="peak"><td>26.4</td><td>3.52</td><td>-</td><td>9.70</td></tr>
+          <tr><td>30</td><td>4.01</td><td>1.04</td><td>9.62</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  -->
+
+  <!-- ===== ANALYST NOTES (render the editable field; if empty, omit entirely) ===== -->
+  <div class="notes">
+    Analyst notes go here, taken verbatim from the editable field in the app. The app must never generate this text. If the field is empty, do not render this block at all.
+  </div>
+
+  <!-- ===== FOOTER ===== -->
+  <div class="provenance">
+    Data: SprintScope @ 200 Hz, Butterworth order 2. Operator S. Vial. Team Saudi Athletics · Performance Analysis
+  </div>
+
+</div>
+</body>
+</html>
